@@ -3415,15 +3415,23 @@ function updateDomaineSettings() {
   recalculateAll(); // Recalculer immédiatement pour le feedback visuel
   if (domaineSettingsTimer) clearTimeout(domaineSettingsTimer);
   domaineSettingsTimer = setTimeout(async () => {
+  try {
+
     const volume = parseFloat(document.getElementById('calc-volume-ha-defaut').value) || 300;
     const capacite = parseFloat(document.getElementById('calc-capacite-atomiseur').value) || 15;
     currentDomaine.volume_bouillie_ha_defaut = volume;
     currentDomaine.capacite_atomiseur = capacite;
-    await sb.from('domaines').update({ 
+    await ovCheckedMutation(sb.from('domaines').update({ 
       volume_bouillie_ha_defaut: volume, 
       capacite_atomiseur: capacite 
-    }).eq('id', currentDomaine.id);
-  }, 800);
+    }).eq('id', currentDomaine.id).select('id'), true);
+  
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
+}, 800);
 }
 
 // Calcule le volume de bouillie pour les parcelles cochées en mode surface
@@ -3773,6 +3781,8 @@ function resetCalc() {
 
 // ===== Sauvegarde et historique =====
 async function savePreparation() {
+  try {
+
   const productKeys = Object.keys(calcSelectedProducts);
   if (productKeys.length === 0) { alert('Cochez au moins un produit avec une dose.'); return; }
   
@@ -3802,7 +3812,7 @@ async function savePreparation() {
     capacite_atomiseur_utilisee: capaciteAtomiseur
   };
   
-  const { data: prep, error } = await sb.from('preparations').insert(prepData).select().single();
+  const { data: prep, error } = await ovCheckedMutation(sb.from('preparations').insert(prepData).select().single(), false);
   if (error) { alert('Erreur sauvegarde : ' + error.message); return; }
   
   // Insérer les produits
@@ -3815,7 +3825,7 @@ async function savePreparation() {
     unite_quantite: calcSelectedProducts[pid].unite_quantite || null,
     ordre: i
   }));
-  await sb.from('preparation_produits').insert(ppRows);
+  await ovCheckedMutation(sb.from('preparation_produits').insert(ppRows), false);
   
   // Insérer les parcelles (uniquement si mode surface)
   if (calcMode === 'surface' && Object.keys(calcSelectedParcelles).length > 0) {
@@ -3825,12 +3835,18 @@ async function savePreparation() {
       surface_traitee: calcSelectedParcelles[pid].surface_traitee,
       zone_precise: calcSelectedParcelles[pid].zone_precise || null
     }));
-    await sb.from('preparation_parcelles').insert(pparcRows);
+    await ovCheckedMutation(sb.from('preparation_parcelles').insert(pparcRows), false);
   }
   
   await loadAllData();
   renderHistorique();
   toast('💾 Préparation sauvegardée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 function renderHistorique() {
@@ -3932,13 +3948,21 @@ function loadPreparationInCalc(prepId) {
 }
 
 async function deletePreparation(prepId) {
+  try {
+
   if (!confirm('Supprimer cette préparation ?')) return;
-  await sb.from('preparations').delete().eq('id', prepId);
+  await ovCheckedMutation(sb.from('preparations').delete().eq('id', prepId).select('id'), true);
   cache.preparations = cache.preparations.filter(p => p.id !== prepId);
   cache.preparation_produits = cache.preparation_produits.filter(pp => pp.preparation_id !== prepId);
   cache.preparation_parcelles = cache.preparation_parcelles.filter(pp => pp.preparation_id !== prepId);
   renderHistorique();
   toast('🗑 Supprimée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ===== Import préparation dans formulaire traitement =====
@@ -3968,6 +3992,8 @@ function openImportPreparationModal() {
 }
 
 async function importPreparation(prepId) {
+  try {
+
   const pps = cache.preparation_produits.filter(pp => pp.preparation_id === prepId).sort((a,b) => (a.ordre||0)-(b.ordre||0));
   const pparcs = cache.preparation_parcelles.filter(pp => pp.preparation_id === prepId);
   
@@ -4025,10 +4051,16 @@ async function importPreparation(prepId) {
   }
   
   // Marquer comme utilisée
-  await sb.from('preparations').update({ utilisee: true }).eq('id', prepId);
+  await ovCheckedMutation(sb.from('preparations').update({ utilisee: true }).eq('id', prepId).select('id'), true);
   if (prep) prep.utilisee = true;
   closeModal('modal-import-prep');
   toast('📋 Préparation importée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== CARNET DE PARCELLE ==============
@@ -4148,6 +4180,8 @@ function openNoteModal(noteId) {
 }
 
 async function saveNote() {
+  try {
+
   const noteId = document.getElementById('n-id').value;
   const parcelleId = document.getElementById('p-id').value;
   const contenu = document.getElementById('n-contenu').value.trim();
@@ -4168,17 +4202,17 @@ async function saveNote() {
     categorie,
     source: document.getElementById('n-source').value.trim() || null,
     contenu,
-    auteur_user_id: currentUser.id,
+    auteur_user_id: noteId ? cache.parcelle_notes.find(n => n.id === noteId)?.auteur_user_id : currentUser.id,
     updated_at: new Date().toISOString()
   };
   
   if (noteId) {
-    const { error } = await sb.from('parcelle_notes').update(data).eq('id', noteId);
+    const { error } = await ovCheckedMutation(sb.from('parcelle_notes').update(data).eq('id', noteId).select('id'), true);
     if (error) { alert('Erreur : ' + error.message); return; }
     const i = cache.parcelle_notes.findIndex(n => n.id === noteId);
     if (i >= 0) cache.parcelle_notes[i] = { ...cache.parcelle_notes[i], ...data };
   } else {
-    const { data: newNote, error } = await sb.from('parcelle_notes').insert(data).select().single();
+    const { data: newNote, error } = await ovCheckedMutation(sb.from('parcelle_notes').insert(data).select().single(), false);
     if (error) { alert('Erreur : ' + error.message); return; }
     if (newNote) cache.parcelle_notes.push(newNote);
   }
@@ -4186,17 +4220,31 @@ async function saveNote() {
   closeModal('modal-note');
   renderCarnet(parcelleId);
   toast('💾 Entrée enregistrée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteNote() {
+  try {
+
   if (!confirm('Supprimer cette entrée du carnet ?')) return;
   const noteId = document.getElementById('n-id').value;
   const parcelleId = document.getElementById('p-id').value;
-  await sb.from('parcelle_notes').delete().eq('id', noteId);
+  await ovCheckedMutation(sb.from('parcelle_notes').delete().eq('id', noteId).select('id'), true);
   cache.parcelle_notes = cache.parcelle_notes.filter(n => n.id !== noteId);
   closeModal('modal-note');
   renderCarnet(parcelleId);
   toast('🗑 Supprimée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // Avertissement si vitesse du vent dépasse la limite légale (19 km/h)
@@ -4365,6 +4413,8 @@ function openFicheEpiModal(ficheId, traitementId) {
 }
 
 async function saveFicheEpi() {
+  try {
+
   const ficheId = document.getElementById('fe-id').value;
   const traitementId = document.getElementById('fe-traitement-id').value;
   const nom = document.getElementById('fe-nom').value.trim();
@@ -4426,12 +4476,12 @@ async function saveFicheEpi() {
   }
   
   if (ficheId) {
-    const { error } = await sb.from('fiches_epi').update(data).eq('id', ficheId);
+    const { error } = await ovCheckedMutation(sb.from('fiches_epi').update(data).eq('id', ficheId).select('id'), true);
     if (error) { alert('Erreur : ' + error.message); return; }
     const i = cache.fiches_epi.findIndex(x => x.id === ficheId);
     if (i >= 0) cache.fiches_epi[i] = { ...cache.fiches_epi[i], ...data };
   } else {
-    const { data: nf, error } = await sb.from('fiches_epi').insert(data).select().single();
+    const { data: nf, error } = await ovCheckedMutation(sb.from('fiches_epi').insert(data).select().single(), false);
     if (error) { alert('Erreur : ' + error.message); return; }
     if (nf) cache.fiches_epi.push(nf);
   }
@@ -4439,17 +4489,31 @@ async function saveFicheEpi() {
   closeModal('modal-fiche-epi');
   renderFichesEpiList(traitementId);
   toast('🦺 Fiche EPI enregistrée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteFicheEpi() {
+  try {
+
   if (!confirm('Supprimer cette fiche EPI ? Action irréversible.')) return;
   const ficheId = document.getElementById('fe-id').value;
   const traitementId = document.getElementById('fe-traitement-id').value;
-  await sb.from('fiches_epi').delete().eq('id', ficheId);
+  await ovCheckedMutation(sb.from('fiches_epi').delete().eq('id', ficheId).select('id'), true);
   cache.fiches_epi = cache.fiches_epi.filter(f => f.id !== ficheId);
   closeModal('modal-fiche-epi');
   renderFichesEpiList(traitementId);
   toast('🗑 Fiche supprimée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // Export PDF de la fiche EPI
@@ -4889,6 +4953,8 @@ function openRappelModal(rappelId) {
 }
 
 async function saveRappel() {
+  try {
+
   const id = document.getElementById('r-id').value;
   const texte = document.getElementById('r-texte').value.trim();
   if (!texte) { alert('Le texte est obligatoire.'); return; }
@@ -4902,13 +4968,13 @@ async function saveRappel() {
   };
   
   if (id) {
-    const { error } = await sb.from('rappels').update(data).eq('id', id);
+    const { error } = await ovCheckedMutation(sb.from('rappels').update(data).eq('id', id).select('id'), true);
     if (error) { alert('Erreur : ' + error.message); return; }
     const i = cache.rappels.findIndex(r => r.id === id);
     if (i >= 0) cache.rappels[i] = { ...cache.rappels[i], ...data };
   } else {
     data.created_by = currentUser.id;
-    const { data: nr, error } = await sb.from('rappels').insert(data).select().single();
+    const { data: nr, error } = await ovCheckedMutation(sb.from('rappels').insert(data).select().single(), false);
     if (error) { alert('Erreur : ' + error.message); return; }
     if (nr) cache.rappels.unshift(nr);
   }
@@ -4917,9 +4983,17 @@ async function saveRappel() {
   renderRappels();
   updateSidebarBadges();
   toast('📌 Rappel enregistré');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function toggleRappelFait(rappelId, event) {
+  try {
+
   // Si on clique sur le bouton supprimer, ne pas basculer
   if (event && event.target.closest && event.target.closest('.rap-delete')) return;
   
@@ -4939,7 +5013,7 @@ async function toggleRappelFait(rappelId, event) {
     fait_par: nouveauFait ? currentUser.id : null
   };
   
-  const { error } = await sb.from('rappels').update(update).eq('id', rappelId);
+  const { error } = await ovCheckedMutation(sb.from('rappels').update(update).eq('id', rappelId).select('id'), true);
   if (error) { alert('Erreur : ' + error.message); return; }
   
   // Mettre à jour cache
@@ -4947,28 +5021,50 @@ async function toggleRappelFait(rappelId, event) {
   
   renderRappels();
   updateSidebarBadges();
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function deleteRappel(rappelId) {
+  try {
+
   if (!confirm('Supprimer ce rappel ?')) return;
-  const { error } = await sb.from('rappels').delete().eq('id', rappelId);
+  const { error } = await ovCheckedMutation(sb.from('rappels').delete().eq('id', rappelId).select('id'), true);
   if (error) { alert('Erreur : ' + error.message); return; }
   cache.rappels = cache.rappels.filter(r => r.id !== rappelId);
   renderRappels();
   updateSidebarBadges();
   toast('🗑 Rappel supprimé');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteRappel() {
+  try {
+
   const id = document.getElementById('r-id').value;
   if (!id) return;
   if (!confirm('Supprimer ce rappel ? Action irréversible.')) return;
-  await sb.from('rappels').delete().eq('id', id);
+  await ovCheckedMutation(sb.from('rappels').delete().eq('id', id).select('id'), true);
   cache.rappels = cache.rappels.filter(r => r.id !== id);
   closeModal('modal-rappel');
   renderRappels();
   updateSidebarBadges();
   toast('🗑 Rappel supprimé');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== TÂCHES / PLANNING ==============
@@ -5116,7 +5212,10 @@ function openTacheModal(tacheId) {
 }
 
 async function saveTache() {
+  try {
+
   const id = document.getElementById('t-id').value;
+  if (id && !peutEditerTache(cache.taches.find(t => t.id === id))) { alert('Seul le statut de cette tâche est modifiable.'); return; }
   const titre = document.getElementById('t-titre').value.trim();
   if (!titre) { alert('Le titre est obligatoire.'); return; }
   if (!id && !peut('taches_creer')) { alert('Droit insuffisant.'); return; }
@@ -5141,31 +5240,31 @@ async function saveTache() {
 
   let tacheId = id;
   if (id) {
-    const { error } = await sb.from('taches').update(data).eq('id', id);
+    const { error } = await ovCheckedMutation(sb.from('taches').update(data).eq('id', id).select('id'), true);
     if (error) { alert('Erreur : ' + error.message); return; }
     const i = cache.taches.findIndex(x => x.id === id);
     if (i >= 0) cache.taches[i] = { ...cache.taches[i], ...data };
   } else {
     data.created_by = currentUser.id;
     data.statut = 'a_faire';
-    const { data: nt, error } = await sb.from('taches').insert(data).select().single();
+    const { data: nt, error } = await ovCheckedMutation(sb.from('taches').insert(data).select().single(), false);
     if (error) { alert('Erreur : ' + error.message); return; }
     cache.taches.unshift(nt);
     tacheId = nt.id;
   }
 
   // Synchroniser les parcelles liées
-  await sb.from('tache_parcelles').delete().eq('tache_id', tacheId);
+  await ovCheckedMutation(sb.from('tache_parcelles').delete().eq('tache_id', tacheId).select('id'), false);
   cache.tache_parcelles = cache.tache_parcelles.filter(x => x.tache_id !== tacheId);
   if (selParcs.length) {
-    const { data: ins } = await sb.from('tache_parcelles').insert(selParcs.map(pid => ({ tache_id: tacheId, parcelle_id: pid }))).select();
+    const { data: ins } = await ovCheckedMutation(sb.from('tache_parcelles').insert(selParcs.map(pid => ({ tache_id: tacheId, parcelle_id: pid }))).select(), false);
     if (ins) cache.tache_parcelles.push(...ins);
   }
   // Synchroniser les assignations
-  await sb.from('tache_assignations').delete().eq('tache_id', tacheId);
+  await ovCheckedMutation(sb.from('tache_assignations').delete().eq('tache_id', tacheId).select('id'), false);
   cache.tache_assignations = cache.tache_assignations.filter(x => x.tache_id !== tacheId);
   if (selAssignes.length) {
-    const { data: ins } = await sb.from('tache_assignations').insert(selAssignes.map(uid => ({ tache_id: tacheId, user_id: uid }))).select();
+    const { data: ins } = await ovCheckedMutation(sb.from('tache_assignations').insert(selAssignes.map(uid => ({ tache_id: tacheId, user_id: uid }))).select(), false);
     if (ins) cache.tache_assignations.push(...ins);
   }
 
@@ -5173,9 +5272,17 @@ async function saveTache() {
   renderTaches();
   if (typeof map !== 'undefined' && map) renderMapMarkers();
   toast('✅ Tâche enregistrée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function setTacheStatut(tacheId, statut) {
+  try {
+
   const t = cache.taches.find(x => x.id === tacheId);
   if (!t) return;
   if (!peutChangerStatutTache(t)) { alert('Vous ne pouvez pas modifier cette tâche.'); renderTachesList(); return; }
@@ -5184,22 +5291,30 @@ async function setTacheStatut(tacheId, statut) {
     fait_at: statut === 'fait' ? new Date().toISOString() : null,
     fait_par: statut === 'fait' ? currentUser.id : null
   };
-  const { error } = await sb.from('taches').update(update).eq('id', tacheId);
+  const { error } = await ovCheckedMutation(sb.from('taches').update(update).eq('id', tacheId).select('id'), true);
   if (error) { alert('Erreur : ' + error.message); renderTachesList(); return; }
   Object.assign(t, update);
   renderTachesList();
   updateTachesBadge();
   if (typeof map !== 'undefined' && map) renderMapMarkers();
   toast('✅ Statut mis à jour');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteTache() {
+  try {
+
   const id = document.getElementById('t-id').value;
   if (!id) return;
   const t = cache.taches.find(x => x.id === id);
   if (t && !peutEditerTache(t)) { alert('Droit insuffisant.'); return; }
   if (!confirm('Supprimer cette tâche ? Action irréversible.')) return;
-  const { error } = await sb.from('taches').delete().eq('id', id);
+  const { error } = await ovCheckedMutation(sb.from('taches').delete().eq('id', id).select('id'), true);
   if (error) { alert('Erreur : ' + error.message); return; }
   cache.taches = cache.taches.filter(x => x.id !== id);
   cache.tache_parcelles = cache.tache_parcelles.filter(x => x.tache_id !== id);
@@ -5208,6 +5323,12 @@ async function confirmDeleteTache() {
   renderTaches();
   if (typeof map !== 'undefined' && map) renderMapMarkers();
   toast('🗑 Tâche supprimée');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 function updateTachesBadge() {
@@ -5873,6 +5994,8 @@ function stopParcoursGPS(silent) {
 }
 
 async function saveParcours() {
+  try {
+
   if (!pcCanEdit) return;
   stopParcoursGPS(true);
   if (pcManualDraw) cancelDrawParcoursTrace();
@@ -5894,31 +6017,45 @@ async function saveParcours() {
   };
   const id = document.getElementById('pc-id').value;
   if (id) {
-    const { error } = await sb.from('parcours').update(data).eq('id', id);
+    const { error } = await ovCheckedMutation(sb.from('parcours').update(data).eq('id', id).select('id'), true);
     if (error) { alert('Erreur : ' + error.message); return; }
     const i = cache.parcours.findIndex(x => x.id === id);
     if (i >= 0) cache.parcours[i] = { ...cache.parcours[i], ...data };
   } else {
     data.created_by = currentUser.id;
-    const { data: np, error } = await sb.from('parcours').insert(data).select().single();
+    const { data: np, error } = await ovCheckedMutation(sb.from('parcours').insert(data).select().single(), false);
     if (error) { alert('Erreur : ' + error.message); return; }
     cache.parcours.unshift(np);
   }
   closeParcoursEditor();
   renderParcours();
   toast('✅ Parcours enregistré');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteParcours() {
+  try {
+
   const id = document.getElementById('pc-id').value;
   if (!id) return;
   if (!confirm('Supprimer ce parcours ? Action irréversible.')) return;
-  const { error } = await sb.from('parcours').delete().eq('id', id);
+  const { error } = await ovCheckedMutation(sb.from('parcours').delete().eq('id', id).select('id'), true);
   if (error) { alert('Erreur : ' + error.message); return; }
   cache.parcours = cache.parcours.filter(x => x.id !== id);
   closeParcoursEditor();
   renderParcours();
   toast('🗑 Parcours supprimé');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 function closeParcoursEditor() {
@@ -6074,7 +6211,7 @@ async function loadDomaine() {
 async function loadAllData() {
   const [p, pr, t, m, tp, tparc, prep, pp, pparc, pnotes, fe, rap, tch, tchp, tcha, prc] = await Promise.all([
     sb.from('parcelles').select('*').eq('domaine_id', currentDomaine.id).order('ordre'),
-    sb.from('produits').select('*').eq('domaine_id', currentDomaine.id).order('nom'),
+    ovLoadProduits(currentDomaine.id),
     sb.from('traitements').select('*').eq('domaine_id', currentDomaine.id).order('date', { ascending: false }),
     sb.from('membres').select('role, user_id, permissions').eq('domaine_id', currentDomaine.id),
     sb.from('traitement_produits').select('*'),
@@ -6375,7 +6512,7 @@ async function doVerifyCode() {
     // Préparer l'écran d'inscription
     const roleLabel = { 'admin': 'admin', 'membre': 'membre permanent', 'saisonnier': 'saisonnier' }[result.out_role] || result.out_role;
     document.getElementById('join-register-info').innerHTML = 
-      `Vous allez rejoindre <strong>${result.out_domaine_nom}</strong> en tant que <strong>${roleLabel}</strong>.`;
+      `Vous allez rejoindre <strong>${escapeHtml(result.out_domaine_nom)}</strong> en tant que <strong>${roleLabel}</strong>.`;
     document.getElementById('jreg-email').value = result.out_email_attendu;
     document.getElementById('jreg-email').readOnly = true;
     document.getElementById('jreg-email').style.background = '#f7f4ed';
@@ -7124,6 +7261,9 @@ function updateSurfaceTotale() {
 }
 
 async function saveTraitement() {
+  try {
+
+  if (!peut('traitements_creer')) { alert('Droit insuffisant pour enregistrer un traitement.'); return; }
   const tid = document.getElementById('t-id').value;
   const date = document.getElementById('t-date').value;
   if (!date) { alert('La date est obligatoire.'); return; }
@@ -7140,6 +7280,9 @@ async function saveTraitement() {
     if (!isNaN(dose) && dose > 0) produits.push({ produit_id: pid, dose, unite });
   });
   if (produits.length === 0) { alert('Cochez au moins un produit avec une dose.'); return; }
+  if (!peut('stock_modifier')) {
+    alert('Ce traitement modifie un stock suivi. Demandez le droit de modifier les stocks à votre dirigeant.'); return;
+  }
 
   // Récupérer les parcelles cochées avec leurs surfaces
   const parcelles = [];
@@ -7176,6 +7319,22 @@ async function saveTraitement() {
     parcelles: parcelles.map(p => p.parcelle_id)
   };
 
+  // Calcul des nouvelles quantités à débiter et stocker
+  const totalHa = parcelles.reduce((s,p) => s + ((p.surface_traitee||0) / 10000), 0);
+  
+  let traitementId;
+  if (tid) {
+    const { error } = await ovCheckedMutation(sb.from('traitements').update(data).eq('id', tid).select('id'), true);
+    if (error) { alert('Erreur sauvegarde : ' + error.message); return; }
+    traitementId = tid;
+    await ovCheckedMutation(sb.from('traitement_produits').delete().eq('traitement_id', tid).select('id'), false);
+    await ovCheckedMutation(sb.from('traitement_parcelles').delete().eq('traitement_id', tid).select('id'), false);
+  } else {
+    const { data: nd, error } = await ovCheckedMutation(sb.from('traitements').insert(data).select().single(), false);
+    if (error) { alert('Erreur sauvegarde : ' + error.message); return; }
+    traitementId = nd.id;
+  }
+
   // ===== Restitution du stock (en cas d'édition) =====
   // On récupère les quantités exactes des anciens produits avant de les remplacer
   if (tid) {
@@ -7188,28 +7347,14 @@ async function saveTraitement() {
           const qteARestituer = convertirUnite(otp.quantite_utilisee, otp.unite_quantite, uniteStock);
           if (qteARestituer != null) {
             const nouveauStock = (prod.stock_actuel || 0) + qteARestituer;
-            await sb.from('produits').update({ stock_actuel: parseFloat(nouveauStock.toFixed(3)) }).eq('id', prod.id);
+            await ovCheckedMutation(sb.from('produits').update({ stock_actuel: parseFloat(nouveauStock.toFixed(3)) }).eq('id', prod.id).select('id'), true);
+            prod.stock_actuel = parseFloat(nouveauStock.toFixed(3));
           }
         }
       }
     }
   }
   
-  // Calcul des nouvelles quantités à débiter et stocker
-  const totalHa = parcelles.reduce((s,p) => s + ((p.surface_traitee||0) / 10000), 0);
-  
-  let traitementId;
-  if (tid) {
-    const { error } = await sb.from('traitements').update(data).eq('id', tid);
-    if (error) { alert('Erreur sauvegarde : ' + error.message); return; }
-    traitementId = tid;
-    await sb.from('traitement_produits').delete().eq('traitement_id', tid);
-    await sb.from('traitement_parcelles').delete().eq('traitement_id', tid);
-  } else {
-    const { data: nd, error } = await sb.from('traitements').insert(data).select().single();
-    if (error) { alert('Erreur sauvegarde : ' + error.message); return; }
-    traitementId = nd.id;
-  }
 
   // Préparer les lignes traitement_produits avec quantité utilisée stockée
   const tpRows = produits.map((p,i) => {
@@ -7225,10 +7370,10 @@ async function saveTraitement() {
       unite_quantite: uniteQte
     };
   });
-  if (tpRows.length) await sb.from('traitement_produits').insert(tpRows);
+  if (tpRows.length) await ovCheckedMutation(sb.from('traitement_produits').insert(tpRows), false);
 
   const tparcRows = parcelles.map(p => ({ traitement_id: traitementId, parcelle_id: p.parcelle_id, surface_traitee: p.surface_traitee, zone_precise: p.zone_precise }));
-  if (tparcRows.length) await sb.from('traitement_parcelles').insert(tparcRows);
+  if (tparcRows.length) await ovCheckedMutation(sb.from('traitement_parcelles').insert(tparcRows), false);
 
   // Débiter le stock pour les nouveaux produits
   for (const p of produits) {
@@ -7243,7 +7388,7 @@ async function saveTraitement() {
     if (qteDebitee == null) continue; // unités incompatibles
     
     const nouveauStock = (prod.stock_actuel || 0) - qteDebitee;
-    await sb.from('produits').update({ stock_actuel: Math.max(0, parseFloat(nouveauStock.toFixed(3))) }).eq('id', prod.id);
+    await ovCheckedMutation(sb.from('produits').update({ stock_actuel: Math.max(0, parseFloat(nouveauStock.toFixed(3))) }).eq('id', prod.id).select('id'), true);
   }
 
   await loadAllData();
@@ -7251,6 +7396,12 @@ async function saveTraitement() {
   renderTraitements();
   renderDashboard();
   toast();
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // Conversion entre unités compatibles (kg/g, L/mL)
@@ -7317,11 +7468,15 @@ function duplicateTraitement(tid) {
 }
 
 async function deleteTraitement(tid) {
+  try {
+
   if (!peut('traitements_supprimer')) { alert('Vous n\'avez pas le droit de supprimer un traitement.'); return; }
+  if (!peut('stock_modifier')) { alert('La restitution du stock nécessite le droit de modifier les stocks.'); return; }
   if (!confirm('Supprimer ce traitement ?')) return;
   
-  // Avant de supprimer, restituer le stock des produits utilisés
+  // Supprimer avant de restituer le stock : un refus ne doit pas modifier le stock.
   const tps = getTraitementProduits(tid);
+  await ovCheckedMutation(sb.from('traitements').delete().eq('id',tid).select('id'), true);
   for (const tp of tps) {
     if (tp.quantite_utilisee != null && tp.unite_quantite) {
       const prod = getProduit(tp.produit_id);
@@ -7330,7 +7485,7 @@ async function deleteTraitement(tid) {
         const qteARestituer = convertirUnite(tp.quantite_utilisee, tp.unite_quantite, uniteStock);
         if (qteARestituer != null) {
           const nouveauStock = (prod.stock_actuel || 0) + qteARestituer;
-          await sb.from('produits').update({ stock_actuel: parseFloat(nouveauStock.toFixed(3)) }).eq('id', prod.id);
+          await ovCheckedMutation(sb.from('produits').update({ stock_actuel: parseFloat(nouveauStock.toFixed(3)) }).eq('id', prod.id).select('id'), true);
           // Mise à jour du cache
           const i = cache.produits.findIndex(x => x.id === prod.id);
           if (i >= 0) cache.produits[i].stock_actuel = parseFloat(nouveauStock.toFixed(3));
@@ -7340,11 +7495,17 @@ async function deleteTraitement(tid) {
   }
   
   // Les CASCADE supprimeront automatiquement traitement_produits et traitement_parcelles
-  await sb.from('traitements').delete().eq('id',tid);
+
   cache.traitements = cache.traitements.filter(t => t.id!==tid);
   cache.traitement_produits = cache.traitement_produits.filter(tp => tp.traitement_id!==tid);
   cache.traitement_parcelles = cache.traitement_parcelles.filter(tp => tp.traitement_id!==tid);
   renderTraitements(); renderDashboard(); renderProduits(); toast('🗑 Supprimé — stock restitué');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== PARCELLES ==============
@@ -7608,10 +7769,12 @@ function refaireOrientationRangs() {
 }
 
 async function validerOrientationRangs() {
+  try {
+
   const st = orientationDrawState; if (!st || st.points.length < 2) return;
   const pid = st.parcelleId;
   const o = orientationFromBearing(st.bearing);
-  const { error } = await sb.from('parcelles').update({ orientation_rangs: o }).eq('id', pid);
+  const { error } = await ovCheckedMutation(sb.from('parcelles').update({ orientation_rangs: o }).eq('id', pid).select('id'), true);
   if (error) {
     if (/orientation_rangs/i.test(error.message || '')) alert('La colonne orientation_rangs n\'existe pas encore dans Supabase. Lance la migration SQL fournie, puis réessaie.');
     else alert('Erreur : ' + error.message);
@@ -7622,6 +7785,12 @@ async function validerOrientationRangs() {
   toast('📐 Orientation enregistrée : ' + o + '°');
   terminerOrientationRangs();
   setTimeout(() => openParcelleModal(pid), 200);
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 function annulerOrientationRangs() {
@@ -7704,6 +7873,8 @@ function openParcelleModal(pid) {
 }
 
 async function saveParcelle() {
+  try {
+
   const pid = document.getElementById('p-id').value;
   const nom = document.getElementById('p-nom').value.trim();
   const cepage = getCepageInputsValue();
@@ -7727,35 +7898,49 @@ async function saveParcelle() {
     data.orientation_rangs = Math.round(parseFloat(_oriEl.value));
   }
   if (pid) {
-    let { error } = await sb.from('parcelles').update(data).eq('id',pid);
+    let { error } = await ovCheckedMutation(sb.from('parcelles').update(data).eq('id',pid).select('id'), true);
     if (error && /orientation_rangs/i.test(error.message || '')) {
       delete data.orientation_rangs;
-      ({ error } = await sb.from('parcelles').update(data).eq('id',pid));
+      ({ error } = await ovCheckedMutation(sb.from('parcelles').update(data).eq('id',pid).select('id'), true));
     }
     if (error) { alert("Erreur d'enregistrement : " + error.message); return; }
     const i = cache.parcelles.findIndex(x=>x.id===pid); if (i>=0) cache.parcelles[i]={...cache.parcelles[i],...data};
   } else {
     data.ordre = cache.parcelles.length;
-    const { data: nd, error } = await sb.from('parcelles').insert(data).select().single();
+    const { data: nd, error } = await ovCheckedMutation(sb.from('parcelles').insert(data).select().single(), false);
     if (error) { alert("Erreur d'enregistrement : " + error.message); return; }
     if (nd) cache.parcelles.push(nd);
   }
   closeModal('modal-parcelle'); renderParcelles(); renderDashboard();
   if (mapInitialized) { renderMapPolygones(); renderMapMarkers(); }
   toast();
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteParcelle() {
+  try {
+
   const pid = document.getElementById('p-id').value;
   const nb = cache.traitements.filter(t => getParcellesIds(t).includes(pid)).length;
   let msg = 'Supprimer cette parcelle ?';
   if (nb > 0) msg += `\n\n⚠️ ${nb} traitement(s) y sont rattachés.`;
   if (!confirm(msg)) return;
-  await sb.from('parcelles').delete().eq('id',pid);
+  await ovCheckedMutation(sb.from('parcelles').delete().eq('id',pid).select('id'), true);
   cache.parcelles = cache.parcelles.filter(p => p.id!==pid);
   cache.traitement_parcelles = cache.traitement_parcelles.filter(tp => tp.parcelle_id!==pid);
   cache.traitements.forEach(t => { t.parcelles = (t.parcelles||[]).filter(p => p!==pid); });
   closeModal('modal-parcelle'); renderParcelles(); renderDashboard(); toast('🗑 Supprimé');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // Drag & drop parcelles
@@ -8040,6 +8225,9 @@ function toggleStockManuel(e) {
 }
 
 async function saveProduit() {
+  try {
+
+  if (!peut('produits_modifier')) { alert('Droit insuffisant pour modifier les produits.'); return; }
   const pid = document.getElementById('pr-id').value;
   const nom = document.getElementById('pr-nom').value.trim();
   const types = [...document.querySelectorAll('#pr-types-list input:checked')].map(cb => cb.value);
@@ -8064,23 +8252,39 @@ async function saveProduit() {
     stock_actuel: document.getElementById('pr-stock-actuel').value !== '' ? parseFloat(document.getElementById('pr-stock-actuel').value) : null,
     seuil_alerte_pct: document.getElementById('pr-seuil-alerte').value ? parseFloat(document.getElementById('pr-seuil-alerte').value) : 20
   };
+  if (!peut('stock_modifier')) { delete data.stock_actuel; delete data.seuil_alerte_pct; }
+  if (!peut('prix_voir')) delete data.prix_conditionnement;
   if (pid) {
-    const { error } = await sb.from('produits').update(data).eq('id',pid);
+    const { error } = await ovCheckedMutation(sb.from('produits').update(data).eq('id',pid).select('id'), true);
     if (!error) { const i = cache.produits.findIndex(x=>x.id===pid); if (i>=0) cache.produits[i]={...cache.produits[i],...data}; }
   } else {
-    const { data: nd, error } = await sb.from('produits').insert(data).select().single();
-    if (!error && nd) cache.produits.push(nd);
+    const { data: nd, error } = await ovCheckedMutation(sb.from('produits').insert(data).select('id').single(), false);
+    if (!error && nd) cache.produits.push({ ...data, ...nd });
   }
   closeModal('modal-produit'); renderProduits(); renderDashboard(); toast();
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 async function confirmDeleteProduit() {
+  try {
+
   const pid = document.getElementById('pr-id').value;
   if (cache.traitements.some(t => t.produit_id===pid)) { alert('Impossible : ce produit est utilisé dans des traitements.'); return; }
   if (!confirm('Supprimer ce produit ?')) return;
-  await sb.from('produits').delete().eq('id',pid);
+  await ovCheckedMutation(sb.from('produits').delete().eq('id',pid).select('id'), true);
   cache.produits = cache.produits.filter(p => p.id!==pid);
   closeModal('modal-produit'); renderProduits(); toast('🗑 Supprimé');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== MEMBRES ==============
@@ -8331,6 +8535,8 @@ function appliquerProfil() {
 }
 
 async function saveMembre() {
+  try {
+
   const userId = document.getElementById('mm-user-id').value;
   const role = document.getElementById('mm-role').value;
   
@@ -8341,10 +8547,10 @@ async function saveMembre() {
     });
   }
   
-  const { error } = await sb.from('membres')
+  const { error } = await ovCheckedMutation(sb.from('membres')
     .update({ role, permissions })
     .eq('user_id', userId)
-    .eq('domaine_id', currentDomaine.id);
+    .eq('domaine_id', currentDomaine.id).select('id'), true);
   
   if (error) { alert('Erreur : ' + error.message); return; }
   
@@ -8357,6 +8563,12 @@ async function saveMembre() {
   closeModal('modal-membre');
   renderMembres();
   toast('✓ Droits mis à jour');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== INVITATIONS ==============
@@ -8556,10 +8768,18 @@ async function revoquerInvitation(invitationId) {
 }
 
 async function removeMembre(userId) {
+  try {
+
   if (!confirm('Retirer ce membre du domaine ?')) return;
-  await sb.from('membres').delete().eq('user_id', userId).eq('domaine_id', currentDomaine.id);
+  await ovCheckedMutation(sb.from('membres').delete().eq('user_id', userId).eq('domaine_id', currentDomaine.id).select('id'), false);
   cache.membres = cache.membres.filter(m => m.user_id !== userId);
   renderMembres(); toast('✓ Membre retiré');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== CARTE ==============
@@ -8702,15 +8922,23 @@ function renderMapMarkers() {
     const tachesPopup = nbT ? `<div style="margin-top:6px; border-top:1px solid var(--border); padding-top:6px;"><div style="font-size:11px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.4px; margin-bottom:2px;">${nbT} tâche${nbT>1?'s':''} en cours</div>${tachesP.map(tk=>`<div style="font-size:12px; color:var(--ink);">• ${(tk.titre||'').replace(/</g,'&lt;')}${tk.statut==='en_cours'?' <em style="color:var(--muted);">(en cours)</em>':''}</div>`).join('')}</div>` : '';
     marker.bindPopup(`<div class="ov-pp-head"><div class="ov-pp-name">${p.nom}</div><div class="ov-pp-cepage">${p.cepage}</div></div><div class="ov-pp-body"><div class="ov-pp-row"><span>Surface</span><b>${fmtSurface(p.surface)} ha</b></div>${enDRE?`<div class="ov-pp-dre">⚠️ DRE : ${dreLabel}</div>`:''}${tachesPopup}<div class="map-popup-actions"><button onclick="openParcelleModal('${p.id}')">Modifier</button><button class="danger" onclick="removeParcelleLocation('${p.id}')">Retirer</button></div></div>`, { className: 'ov-popup' });
     marker.on('dragend', async (e) => {
+  try {
+
       const pos = e.target.getLatLng();
       const parc = getParcelle(p.id);
       if (parc) {
         parc.lat = parseFloat(pos.lat.toFixed(6));
         parc.lng = parseFloat(pos.lng.toFixed(6));
-        await sb.from('parcelles').update({ lat: parc.lat, lng: parc.lng }).eq('id', p.id);
+        await ovCheckedMutation(sb.from('parcelles').update({ lat: parc.lat, lng: parc.lng }).eq('id', p.id).select('id'), true);
         toast();
       }
-    });
+    
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
+});
     parcelleMarkers[p.id] = marker;
   });
 }
@@ -8798,6 +9026,8 @@ function choisirCouleurZone(zoneIndex, couleur) {
 }
 
 async function saveZonesMeta() {
+  try {
+
   const parcelleId = document.getElementById('zm-parcelle-id').value;
   const parc = getParcelle(parcelleId);
   if (!parc || !parc.polygone) return;
@@ -8809,7 +9039,7 @@ async function saveZonesMeta() {
     couleur: document.getElementById(`zm-couleur-${i}`)?.value || '#8b1a3a'
   }));
   
-  const { error } = await sb.from('parcelles').update({ zones_meta: zonesMeta }).eq('id', parcelleId);
+  const { error } = await ovCheckedMutation(sb.from('parcelles').update({ zones_meta: zonesMeta }).eq('id', parcelleId).select('id'), true);
   if (error) { alert('Erreur : ' + error.message); return; }
   
   // Mettre à jour le cache
@@ -8819,6 +9049,12 @@ async function saveZonesMeta() {
   closeModal('modal-zones-meta');
   renderMapPolygones();
   toast('🎨 Zones configurées');
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== POLYGONES PARCELLES ==============
@@ -9112,13 +9348,15 @@ function afficherBarreInstructionsDessin(parcelle) {
 
 // Valide et sauvegarde le polygone dessiné
 async function validerDessinParcelle() {
+  try {
+
   if (!drawingState) return;
   const { parcelleId, drawnItems } = drawingState;
   
   const layers = drawnItems.getLayers();
   if (layers.length === 0) {
     if (!confirm('Aucun tracé. Voulez-vous supprimer le contour existant de cette parcelle ?')) return;
-    await sb.from('parcelles').update({ polygone: null, surface_calculee_m2: null, zones_meta: [] }).eq('id', parcelleId);
+    await ovCheckedMutation(sb.from('parcelles').update({ polygone: null, surface_calculee_m2: null, zones_meta: [] }).eq('id', parcelleId).select('id'), true);
     const i = cache.parcelles.findIndex(p => p.id === parcelleId);
     if (i >= 0) { cache.parcelles[i].polygone = null; cache.parcelles[i].surface_calculee_m2 = null; cache.parcelles[i].zones_meta = []; }
   } else {
@@ -9158,11 +9396,11 @@ async function validerDessinParcelle() {
     }
     
     // Sauvegarder en base
-    const { error } = await sb.from('parcelles').update({ 
+    const { error } = await ovCheckedMutation(sb.from('parcelles').update({ 
       polygone: geojson, 
       surface_calculee_m2: parseFloat(totalSurface_m2.toFixed(2)),
       zones_meta: zonesMeta
-    }).eq('id', parcelleId);
+    }).eq('id', parcelleId).select('id'), true);
     
     if (error) { alert('Erreur : ' + error.message); return; }
     
@@ -9194,6 +9432,12 @@ async function validerDessinParcelle() {
   
   terminerDessin();
   renderMapPolygones();
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // Annule le dessin sans sauvegarder
@@ -9258,12 +9502,20 @@ function startPlacement(pid) {
   document.getElementById('map').style.cursor = 'crosshair';
   if (placementClickHandler) map.off('click', placementClickHandler);
   placementClickHandler = async (e) => {
+  try {
+
     const parc = getParcelle(placementMode.parcelleId); if (!parc) return;
     parc.lat = parseFloat(e.latlng.lat.toFixed(6));
     parc.lng = parseFloat(e.latlng.lng.toFixed(6));
-    await sb.from('parcelles').update({ lat: parc.lat, lng: parc.lng }).eq('id', parc.id);
+    await ovCheckedMutation(sb.from('parcelles').update({ lat: parc.lat, lng: parc.lng }).eq('id', parc.id).select('id'), true);
     cancelPlacement(); renderMapMarkers(); renderParcellesMiniList(); toast();
-  };
+  
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
+};
   map.on('click', placementClickHandler);
 }
 
@@ -9281,11 +9533,19 @@ function zoomToParcelle(pid) {
 }
 
 async function removeParcelleLocation(pid) {
+  try {
+
   if (!confirm('Retirer la position GPS de cette parcelle ?')) return;
   const p = getParcelle(pid); if (!p) return;
   p.lat = null; p.lng = null;
-  await sb.from('parcelles').update({ lat: null, lng: null }).eq('id', pid);
+  await ovCheckedMutation(sb.from('parcelles').update({ lat: null, lng: null }).eq('id', pid).select('id'), true);
   renderMapMarkers(); renderParcellesMiniList(); map.closePopup(); toast();
+
+  } catch (error) {
+    console.error('Enregistrement interrompu', error);
+    alert('Enregistrement interrompu : ' + (error?.message || 'erreur inconnue') + '. Rechargez les données avant de réessayer.');
+    return;
+  }
 }
 
 // ============== EXPORT CSV ==============
@@ -10264,6 +10524,25 @@ init();
 
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initWiki); else initWiki();
 })();
+
+// Ne jamais afficher un succès ni modifier le cache après un refus de la base.
+async function ovCheckedMutation(query, requireRow = false) {
+  const result = await query;
+  if (result.error) throw new Error(result.error.message || 'Opération refusée par la base');
+  if (requireRow && Array.isArray(result.data) && result.data.length === 0) {
+    throw new Error('Aucune ligne modifiée : accès refusé ou élément supprimé');
+  }
+  return result;
+}
+
+// Compatibilité pendant le déploiement : ancien accès tant que la RPC est absente.
+async function ovLoadProduits(domaineId) {
+  const result = await sb.rpc('ov_lire_produits_20260930', { p_domaine_id: domaineId });
+  if (result.error?.code === 'PGRST202') {
+    return sb.from('produits').select('*').eq('domaine_id', domaineId).order('nom');
+  }
+  return result;
+}
 </script>
 </body>
 </html>

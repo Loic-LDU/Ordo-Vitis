@@ -1,6 +1,6 @@
 // Service Worker — Ordo Vitis
 // Version du cache : incrémenter à chaque mise à jour majeure de l'app
-const CACHE_VERSION = 'ordo-vitis-v2';
+const CACHE_VERSION = 'ordo-vitis-security-20260930-v3';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 
 // Fichiers essentiels à mettre en cache au démarrage
